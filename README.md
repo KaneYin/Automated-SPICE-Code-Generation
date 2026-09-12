@@ -238,6 +238,10 @@ python gpt_run.py --model qwen3-coder --task_id=1
 
 
 
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
 ## Citation
 
 If you find this work useful, please cite:
@@ -260,4 +264,3 @@ If you find this work useful, please cite:
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=laiyao1/AnalogCoder&type=date&legend=top-left)](https://www.star-history.com/#laiyao1/AnalogCoder&type=date&legend=top-left)
-
