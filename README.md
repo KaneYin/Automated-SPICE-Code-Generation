@@ -1,3 +1,8 @@
+# Automated-SPICE-Code-Generation
+This is the repo of the project on an fully automated SPICE code generation framework with optimazition on performance-cost tradeoffs
+
+---
+
 # AnalogCoder: Analog Circuit Design via Training-Free Code Generation
 
 **New:** Our paper is accepted by **AAAI 2025** as an **Oral Presentation (Top 5%)**, and selected as **AAAI 2025 Most Influential Papers**.
