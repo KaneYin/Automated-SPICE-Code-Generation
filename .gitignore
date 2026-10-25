@@ -228,3 +228,7 @@ p1_0_0.py
 *.py[cod]
 *.py,cover
 .pdm.toml
+
+# Local baseline environments and generated experiment artifacts
+.conda-analog/
+runs/

@@ -11,6 +11,9 @@ import shutil
 
 import signal
 import json
+from pathlib import Path
+
+from usage_accounting.legacy import create_recorder, recorded_call
 
 class TimeoutException(Exception):
     pass
@@ -32,8 +35,12 @@ parser.add_argument("--no_context", action="store_true", default=False)
 parser.add_argument("--no_chain", action="store_true", default=False)
 parser.add_argument("--retrieval", action="store_true", default=True)
 parser.add_argument('--api_key', type=str)
+parser.add_argument('--usage-dir', type=Path, help='Opt-in telemetry run directory; legacy quota behavior is unchanged.')
+parser.add_argument('--usage-pricing', type=Path, help='Optional usage pricing configuration, requires --usage-dir.')
 
 args = parser.parse_args()
+if args.usage_pricing is not None and args.usage_dir is None:
+    parser.error('--usage-pricing requires --usage-dir')
 
 # 更灵活的开源模型判断函数
 def is_opensource_model(model_name):
@@ -128,6 +135,11 @@ elif "deepseek-chat" in args.model:
     client = OpenAI(api_key=args.api_key, base_url="https://api.deepseek.com/v1")
 else:
     client = None
+
+# Telemetry estimates are separate from the historical money_quota checks below.
+usage_provider = ("ollama" if is_opensource_model(args.model) else
+                  "deepseek" if "deepseek-chat" in args.model else "openai")
+usage_recorder = create_recorder(args.usage_dir, usage_provider, args.usage_pricing)
 
 
 # This function extracts the code from the generated content which in markdown format
@@ -808,7 +820,10 @@ def work(task, input, output, task_id, it, background, task_type, flog,
             signal.signal(signal.SIGALRM, signal_handler)
             signal.alarm(360)
             try:
-                completion = ollama.chat(
+                completion = recorded_call(
+                    usage_recorder, ollama.chat,
+                    {"phase": "initial_generation", "generation_index": 0,
+                     "task_id": int(task_id), "trial_id": int(it)},
                     model=args.model,
                     messages=messages,
                     options={
@@ -830,7 +845,10 @@ def work(task, input, output, task_id, it, background, task_type, flog,
                 time.sleep(120)
         else:
             try:
-                completion = client.chat.completions.create(
+                completion = recorded_call(
+                    usage_recorder, client.chat.completions.create,
+                    {"phase": "initial_generation", "generation_index": 0,
+                     "task_id": int(task_id), "trial_id": int(it)},
                     model = args.model,
                     messages = messages,
                     temperature = args.temperature
@@ -1205,7 +1223,10 @@ def work(task, input, output, task_id, it, background, task_type, flog,
                     signal.signal(signal.SIGALRM, signal_handler)
                     signal.alarm(360)
                     try:
-                        completion = ollama.chat(
+                        completion = recorded_call(
+                            usage_recorder, ollama.chat,
+                            {"phase": "repair_generation", "generation_index": code_id,
+                             "task_id": int(task_id), "trial_id": int(it)},
                             model=args.model,
                             messages=messages,
                             options={
@@ -1225,7 +1246,10 @@ def work(task, input, output, task_id, it, background, task_type, flog,
                         start_tmux_session("ollama", "ollama serve")
                         time.sleep(120)
                 else:
-                    completion = client.chat.completions.create(
+                    completion = recorded_call(
+                        usage_recorder, client.chat.completions.create,
+                        {"phase": "repair_generation", "generation_index": code_id,
+                         "task_id": int(task_id), "trial_id": int(it)},
                         model = args.model,
                         messages = messages,
                         temperature = args.temperature
@@ -1290,7 +1314,7 @@ def work(task, input, output, task_id, it, background, task_type, flog,
     return money_quota
 
 
-def get_retrieval(task, task_id):
+def get_retrieval(task, task_id, trial_id=None):
     prompt = open('retrieval_prompt.md', 'r').read()
     prompt = prompt.replace('[TASK]', task)
     messages = [
@@ -1299,7 +1323,10 @@ def get_retrieval(task, task_id):
         ]
     if "gpt" in args.model and args.retrieval:
         try:
-            completion = client.chat.completions.create(
+            completion = recorded_call(
+                usage_recorder, client.chat.completions.create,
+                {"phase": "retrieval", "generation_index": None,
+                 "task_id": int(task_id), "trial_id": trial_id},
                 model = args.model,
                 messages = messages,
                 temperature = args.temperature
@@ -1355,7 +1382,7 @@ def main():
             flog.write("task: {}, it: {}\n".format(circuit_id, it))
             flog.flush()
             if row['Type'] in complex_task_type:
-                subcircuits = get_retrieval(row['Circuit'], args.task_id)
+                subcircuits = get_retrieval(row['Circuit'], args.task_id, trial_id=it)
             else:
                 subcircuits = None
             remaining_money = work(row['Circuit'], row['Input'].strip(), row['Output'].strip(), circuit_id, it, 
