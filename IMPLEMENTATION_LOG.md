@@ -216,3 +216,70 @@ All 24 tests passed, and eight README command blocks passed Bash/Zsh syntax
 checks. The staged project-owned changes passed the whitespace check. The pinned
 upstream snapshot contains inherited whitespace warnings and is intentionally
 preserved byte-for-byte; its 77 file hashes were verified before publication.
+
+## 2026-11-15: Repair-context strategies
+
+Status: Implemented and validated offline. No model inference was performed, so
+no effect on pass rate or measured token usage is claimed.
+
+Changed:
+
+- Added the `context_engineering` package (standard library only). `state.py`
+  derives failure class, layer, trimmed evidence, verified facts, attempt diffs,
+  best candidate, and repeated-failure detection from the upstream conversation.
+  `strategies.py` builds the outgoing request for `full_history`,
+  `latest_feedback`, `llm_summary`, `structured_state`, and `structured_ledger`.
+- Added `--context-mode` to `baselines/analogcoder_pro/run_local.py`. Only
+  `repair_generation` requests are rewritten. The applied strategy and derived
+  state are saved in each call file and the mode in the manifest.
+- The summary strategy makes one recorded call per repair in a new
+  `context_summary` usage stage, with its own seed and file name.
+
+Why:
+
+Rewriting at the transport boundary leaves the pinned upstream runner and its
+checksum unchanged and keeps one source of truth, the upstream conversation.
+Separate seeds for summary calls keep generation seeds identical across modes,
+so the modes can be compared. The default mode sends byte-identical requests.
+
+Validation:
+
+- 16 new offline tests; the suite now has 40 tests, all passing.
+- Replaying the 34 saved repair requests of the October 14 full run through each
+  strategy classified every feedback message and produced these request sizes in
+  characters, relative to full history: latest feedback 0.73, summary 0.37
+  (placeholder 900-character summary, summary-call input not included),
+  structured state 0.31, structured state with ledger 0.33. One request rolled
+  back and seven carried a repeated-failure warning. These are sizes of the
+  historical conversations, not a prediction for a new run.
+
+See [repair-context strategies](docs/CONTEXT_STRATEGIES.md) for usage and limits.
+
+## 2026-11-15: Context-mode comparison tool and first live runs
+
+Changed:
+
+- Added `baselines/analogcoder_pro/compare_runs.py`. It reads saved run
+  directories and prints a per-mode table: passes and passing generation, calls,
+  input/cached/output tokens by stage, mean repair input, truncated responses,
+  tokens per pass, repeated failures (classified from upstream feedback text, so
+  the measure is the same in every mode), strategy counters (applied, fallbacks,
+  rollbacks, repeat warnings), and whether each run's first answers match the
+  first run's. `--json` writes the full comparison. It makes no model calls.
+
+Why:
+
+The context modes change only repair requests, so a comparison needs stage-level
+tokens and a check that the runs started from the same first answers. Reading
+the canonical usage records keeps the numbers consistent with `EXPERIMENT_LOG.md`.
+
+Validation:
+
+- On Run 002 the tool reproduces the logged totals: 63 calls, 231,860 input,
+  112,874 cached, 161,216 output, 14/28 passes (9 first-generation, 5 after
+  repair), 20 truncated responses.
+- First live use: Runs 004–010 in `EXPERIMENT_LOG.md`. The smoke tests in Run 005
+  exercised the `structured_ledger` and `llm_summary` paths against the live model,
+  including summary-call recording. Rollback and the repeated-failure warning
+  have still only been exercised by offline tests.
+- The tool itself has no unit test yet. The offline suite still passes (40 tests).

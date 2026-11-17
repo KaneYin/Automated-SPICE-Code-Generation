@@ -24,12 +24,13 @@ ROOT = HERE.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from usage_accounting.recorder import Recorder, current_context
+from usage_accounting.recorder import Recorder, call_context, current_context
 from usage_accounting.aggregate import export_run, load_calls
 from usage_accounting.pricing import load_pricing
 from usage_accounting.components import load_tokenizer
 from usage_accounting.cli import _local_endpoint
 from baselines.analogcoder_pro.instrumentation import instrument_runtime
+from context_engineering import MODES as CONTEXT_MODES, VERSION as CONTEXT_VERSION, build_context
 
 
 def write_json(path, data):
@@ -97,14 +98,59 @@ print('Voltage-divider operating point: %.6f V' % v)
     print(result.stdout.strip(), flush=True)
 
 
+SUMMARY_MAX_TOKENS = 512
+
+
 class OllamaCompletions:
     def __init__(self, config, call_dir, seed, recorder=None):
         self.config, self.call_dir, self.seed = config, call_dir, seed
         self.count = 0
         self.recorder = recorder
 
+    def _summarize(self, model, messages):
+        """Extra model call for the llm_summary strategy; recorded and counted.
+
+        It has its own seed and file name so the generation calls keep the same
+        numbering and seeds as in every other context mode.
+        """
+        request = {
+            "model": model, "messages": messages, "stream": False,
+            "think": self.config["thinking"], "keep_alive": "30m",
+            "options": {"temperature": 0.0, "num_ctx": self.config["context"],
+                        "num_predict": SUMMARY_MAX_TOKENS, "seed": self.seed + 500000 + self.count},
+        }
+        path = self.call_dir / f"call_{self.count:03d}_summary.json"
+        record = {"request": request, "started_at": time.time()}
+        write_json(path, record)
+        started = time.monotonic()
+        generation = current_context().get("generation_index")
+        with call_context("context_summary", generation_index=generation):
+            usage_record = self.recorder.start(request, current_context(), raw_path=path) if self.recorder else None
+            print(f"Ollama call {self.count}: context summary", flush=True)
+            try:
+                response = api(self.config["endpoint"], "/api/chat", request, self.config["request_timeout"])
+            except Exception as exc:
+                # The strategy falls back to latest feedback; the failure stays on record.
+                record.update(error=str(exc), wall_seconds=round(time.monotonic() - started, 3))
+                write_json(path, record)
+                if self.recorder:
+                    self.recorder.finish(usage_record, error=str(exc), wall_seconds=time.monotonic() - started)
+                return None
+            record.update(response=response, wall_seconds=round(time.monotonic() - started, 3))
+            write_json(path, record)
+            if self.recorder:
+                self.recorder.finish(usage_record, response=response, wall_seconds=record["wall_seconds"])
+        return response["message"].get("content", "")
+
     def create(self, *, model, messages, temperature, **kwargs):
         self.count += 1
+        context_strategy = None
+        mode = self.config.get("context_mode", "full_history")
+        # Only repair requests carry history; other phases are sent unchanged.
+        if mode != "full_history" and current_context().get("phase") == "repair_generation":
+            messages, context_strategy = build_context(
+                mode, messages, generation_budget=self.config.get("max_generations"),
+                summarize=lambda summary_messages: self._summarize(model, summary_messages))
         native_messages = []
         for message in messages:
             item = {"role": message["role"]}
@@ -131,6 +177,8 @@ class OllamaCompletions:
         }
         path = self.call_dir / f"call_{self.count:03d}.json"
         record = {"request": request, "started_at": time.time()}
+        if context_strategy is not None:
+            record["context_strategy"] = context_strategy
         write_json(path, record)
         # Persist lifecycle before dispatch. Persistence failure stops the request.
         usage_record = self.recorder.start(request, current_context(), raw_path=path) if self.recorder else None
@@ -250,6 +298,10 @@ def main():
     parser.add_argument("--max-tokens", type=int, default=4096)
     parser.add_argument("--thinking", action="store_true", help="Enable Qwen's separate thinking mode")
     parser.add_argument("--no-vision", dest="vision", action="store_false")
+    parser.add_argument("--context-mode", choices=CONTEXT_MODES, default="full_history",
+                        help="What a repair request carries: the whole chat (upstream behavior), only the latest "
+                             "answer and feedback, a model-written summary, a structured state, or a structured "
+                             "state with an attempt ledger and rollback to the best candidate")
     parser.add_argument("--request-timeout", type=int, default=600)
     parser.add_argument("--attempt-timeout", type=int, default=1800)
     parser.add_argument("--out", type=Path)
@@ -286,6 +338,7 @@ def main():
         "launcher_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "ngspice_library": env.get("NGSPICE_LIBRARY_PATH"),
         "compatibility": ["Native Ollama transport with explicit context/output/seed/thinking settings", "Runtime alias for upstream prompt_template_comptex.md typo", "60s cap on simulator subprocesses"],
+        "context_strategy": {"version": CONTEXT_VERSION, "mode": args.context_mode},
         "usage_schema_version": 1,
         "usage_pricing": pricing,
         "usage_tokenizer": tokenizer.provenance if tokenizer is not None else None,

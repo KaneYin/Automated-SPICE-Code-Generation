@@ -3,6 +3,8 @@ This is the repo of the project on an fully automated SPICE code generation fram
 
 Project additions: [local Pro baseline](baselines/analogcoder_pro/README.md),
 [experiment log](EXPERIMENT_LOG.md), [usage accounting](docs/USAGE_ACCOUNTING.md),
+[repair-context strategies](docs/CONTEXT_STRATEGIES.md),
+[context-engineering research notes](docs/CONTEXT_ENGINEERING_NOTES.md),
 and [implementation notes](IMPLEMENTATION_LOG.md).
 
 ---

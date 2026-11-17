@@ -1,0 +1,35 @@
+{
+  "version": "1.0.0",
+  "installedAt": "2026-11-16T06:48:47.919Z",
+  "skills": [
+    {
+      "category": "20-ml-paper-writing",
+      "skill": "academic-plotting",
+      "standalone": false
+    },
+    {
+      "category": "20-ml-paper-writing",
+      "skill": "ml-paper-writing",
+      "standalone": false
+    },
+    {
+      "category": "20-ml-paper-writing",
+      "skill": "presenting-conference-talks",
+      "standalone": false
+    },
+    {
+      "category": "20-ml-paper-writing",
+      "skill": "systems-paper-writing",
+      "standalone": false
+    }
+  ],
+  "agents": [
+    "claude",
+    "cursor",
+    "codex",
+    "gemini",
+    "opencode",
+    "agents",
+    "hermes"
+  ]
+}
